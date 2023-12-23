@@ -1,0 +1,4 @@
+scanningLidar/scanningLidar.C
+spinnerLidar/spinnerLidar.C
+
+LIB = $(SOWFA_LIBBIN)/libSOWFAutilityFunctionObjects

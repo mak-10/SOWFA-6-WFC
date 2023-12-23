@@ -1,0 +1,3 @@
+horizontalAxisWindTurbinesALMOpenFAST/horizontalAxisWindTurbinesALMOpenFAST.C
+
+LIB = $(SOWFA_LIBBIN)/libSOWFATurbineModelsOpenFAST

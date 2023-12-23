@@ -1,0 +1,145 @@
+#!/bin/bash
+#SBATCH --job-name=setupTutFarm
+#SBATCH --output foam1preprocess.log
+#SBATCH --ntasks=288
+#SBATCH --time=1:00:00
+#SBATCH --account=mmc
+
+source $HOME/.bash_profile
+cores=$SLURM_NTASKS
+
+echo "Working directory is" $SLURM_SUBMIT_DIR
+echo "Job name is" $SLURM_JOB_NAME
+echo "Submit time is" $(squeue -u $USER -o '%30j %20V' | grep -e $SLURM_JOB_NAME | awk '{print $2}')
+echo "Starting OpenFOAM job at: " $(date)
+echo "using" $cores "core(s)"
+
+# ******************************************** USER INPUT ******************************************** #
+OpenFOAM-6-gcc-dev              # OpenFOAM/SOWFA version. OpenFOAM-6-{gcc,intel}-{central,dev}
+precursorDir=~/OpenFOAM/rthedin-6/run/SOWFA-setups/tut.ABLflatTerrain.precursor
+startTime=20000                 # Start time
+nLocalRefs=2                    # Number of local refinements (serial)
+nGlobalRefs=0                   # Number of global refinements (parallel) 
+solver=superDeliciousVanilla
+refLoc=floating                 # floating, ground.
+coupled=precursor               # precursor,WRFint,WRFbd. WRF-coupled uses the PAT method
+interp=linearupwind             # midpoint, linearupwind. divSchmes midpoints needed for gravity waves
+# If coupled=WRF*, modify 0.forWRFcoupled/qwall.wrf with the appropriate BC (q or T given)
+# **************************************************************************************************** #
+
+# **************************************** PERFORM SOME CHECKS *************************************** #
+if [ ! -f system/controlDict.$solver ];                                            then echo "Job killed (1)"; scancel $SLURM_JOBID; fi
+if [ $nLocalRefs -gt 0 ] && [ ! -f system/topoSetDict.$refLoc.$nLocalRefs ];       then echo "Job killed (2)"; scancel $SLURM_JOBID; fi
+if [ $coupled = precursor ] && [ ! -f $precursorDir/setUp ];                       then echo "Job killed (3)"; scancel $SLURM_JOBID; fi
+if [ $coupled = precursor ] && [ ! -d $precursorDir/postProcessing/boundaryData ]; then echo "Job killed (4)"; scancel $SLURM_JOBID; fi
+if [ $coupled = precursor ] && [ ! -d $precursorDir/$starTime ];                   then echo "Job killed (5)"; scancel $SLURM_JOBID; fi  
+# **************************************************************************************************** #
+
+# ***************************** COPY APPROPRIATE FILES AND SET VARIABLES ***************************** #
+cp system/controlDict.$solver                          system/controlDict
+cp system/fvSchemes.flow.$interp                       system/fvSchemes
+foamDictionary -entry "startTime" -set $startTime -disableFunctionEntries system/controlDict
+
+if [[ $coupled == WRF* ]]; then
+    cp setUp.wrf                                       setUp
+    cp constant/ABLProperties.wrf                      constant/ABLProperties
+    cp system/setFieldsABLDict.wrf                     system/setFieldsABLDict
+else
+    cp $precursorDir/setUp                             setUp
+    cp constant/ABLProperties.givenSourceFiles         constant/ABLProperties
+fi
+
+foamDictionary -entry "nCores" -set $cores setUp
+if [[ $refType == ground* ]]; then
+    foamDictionary -entry "wallModelAverageType" -set local setUp
+fi
+# **************************************************************************************************** #
+
+# *************************************** REFINEMENT FUNCTIONS *************************************** #
+refineMeshLocal()
+{
+   i=1
+   while [ $i -le $1 ]; do
+      # Select cells, refine them, and check the new mesh. refineHexMesh refines mesh and solution
+      topoSet -dict system/topoSetDict.$refLoc.$i -noFunctionObjects > log.1.toposet.$refLoc.$i 2>&1
+      refineHexMesh -overwrite $refLoc > log.1.refineHexMesh.$refLoc.$i 2>&1
+      checkMesh -noFunctionObjects > log.1.checkMesh.local.$i 2>&1
+      let i=i+1
+   done
+}
+
+refineMeshGlobal()
+{
+   i=1
+   while [ $i -le $1 ]
+   do
+      # Refine all cells and check the new mesh. refineMesh only refines mesh
+      srun -n $cores refineMesh -all -parallel -overwrite -noFunctionObjects > log.1.refineMesh.global.$i 2>&1
+      srun -n $cores checkMesh  -parallel -noFunctionObjects > log.1.checkMesh.global.$i 2>&1
+      let i=i+1
+   done
+}
+# **************************************************************************************************** #
+
+# Clean up case before start 
+rm -rf $startTime $startTime.fromPrec
+rm -rf constant/polyMesh
+rm -rf constant/boundaryData
+
+if [[ $coupled == WRF* ]]; then
+    # If it is a wrf-coupled run, the mesh needs to be generated, instead of copied
+    cp -rf 0.forWRFcoupled $startTime
+    mv $startTime/qwall.wrf $startTime/qwall
+
+    # Build the mesh and check it
+    blockMesh -noFunctionObjects > log.1.blockMesh 2>&1
+    checkMesh -noFunctionObjects > log.1.checkMesh 2>&1
+
+elif [ $coupled == precursor ]; then
+    # Get IC information from the precursor
+    mkdir $startTime.fromPrec
+    cp -f $precursorDir/$startTime/{U,T,k,kappat,nut,p_rgh,qwall,Rwall} $startTime.fromPrec
+    cp -rf $startTime.fromPrec $startTime
+   
+    # Copy the mesh from precursor
+    cp -rf $precursorDir/constant/polyMesh constant
+    cp -rf $precursorDir/system/blockMeshDict system
+
+fi
+
+# Make the link to the boundary data
+if [ $coupled = precursor ]; then
+    ln -sf $precursorDir/postProcessing/boundaryData constant/boundaryData
+    ln -sf $precursorDir/constant/givenSource* constant/
+fi
+
+# Do serial local refinement
+refineMeshLocal $nLocalRefs
+
+# Decompose the mesh and solution files
+decomposePar -cellDist -force > log.1.decomposePar 2>&1
+
+# Perform global refinements after decomposePar, avoiding load unbalance
+refineMeshGlobal $nGlobalRefs
+
+# Change the boundary conditions from cyclic everywhere to TVMIO, unless WRFint. See readme file
+if [ $coupled != WRFint ]; then
+    srun -n $cores changeDictionary -dict system/changeDictionaryDict.TVMIO -time $startTime -subDict dictionaryReplacement -parallel > log.1.changeDictionary.TVMIO 2>&1
+fi
+
+# Renumber the mesh for better matrix solver performance.
+if [ $(($nLocalRefs+$nGlobalRefs)) -gt 0 ]; then
+    srun -n $cores renumberMesh -parallel -overwrite > log.1.renumberMesh 2>&1
+fi
+
+# Run the flow field initializer
+if [[ $coupled == WRF** ]]; then
+   srun -n $cores --cpu_bind=cores setFieldsABL -parallel > log.1.setFieldsABL 2>&1
+fi
+
+# Do a final check on the mesh.
+srun -n $cores checkMesh -parallel -allGeometry -allTopology > log.1.checkMesh.full 2>&1
+
+echo "Ending OpenFOAM job at: " $(date)
+
+# **************************************************************************************************** #

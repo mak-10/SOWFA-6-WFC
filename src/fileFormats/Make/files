@@ -1,0 +1,4 @@
+sampledSetWriters/vtkStructured/vtkStructuredSetWriterRunTime.C
+sampledSurfaceWriters/boundaryData/boundaryDataSurfaceWriter.C
+
+LIB = $(SOWFA_LIBBIN)/libSOWFAfileFormats

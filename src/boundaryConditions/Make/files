@@ -1,0 +1,18 @@
+/* Surface Shear Stress Models */
+surfaceStressModels = ./surfaceStressModels
+$(surfaceStressModels)/SchumannGrotzbach/SchumannGrotzbachFvPatchField.C
+
+/* Surface Shear Stress Compatible Velocity Boundary Condition */
+surfaceVelocityModels = ./surfaceVelocityModels
+$(surfaceVelocityModels)/velocityABLWallFunction/velocityABLWallFunctionFvPatchField.C
+
+/* Surface Heat Flux Model */
+surfaceHeatFluxModels = ./surfaceHeatFluxModels
+$(surfaceHeatFluxModels)/specifiedSurfaceTemperature/specifiedSurfaceTemperatureFvPatchField.C
+
+/* Inflow/Outflow Boundary Condition  */
+inflowOutflow = ./inflowOutflow
+$(inflowOutflow)/timeVaryingMappedInletOutlet/timeVaryingMappedInletOutletFvPatchFields.C
+
+
+LIB = $(SOWFA_LIBBIN)/libSOWFAboundaryConditions

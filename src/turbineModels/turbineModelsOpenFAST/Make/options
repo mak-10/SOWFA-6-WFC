@@ -1,0 +1,40 @@
+sinclude $(GENERAL_RULES)/mplib$(WM_MPLIB)
+sinclude $(RULES)/mplib$(WM_MPLIB)
+
+EXE_INC = \
+    -I$(LIB_SRC)/finiteVolume/lnInclude \
+    -I$(LIB_SRC)/meshTools/lnInclude \
+    $(PFLAGS) \
+    $(PINC) \
+    -I$(OPENFAST_DIR)/include
+
+LIB_LIBS = \
+    -lfiniteVolume \
+    -lmeshTools \
+    -L$(OPENFAST_DIR)/lib \
+    -laerodyn14lib \
+    -laerodynlib \
+    -lbeamdynlib \
+    -lelastodynlib \
+    -lextptfm_mckflib \
+    -lfeamlib \
+    -lfoamfastlib \
+    -lhydrodynlib \
+    -licedynlib \
+    -licefloelib \
+    -lifwlib \
+    -lmapcpplib \
+    -lmaplib \
+    -lmoordynlib \
+    -lnwtclibs \
+    -lopenfastcpplib \
+    -lopenfastlib \
+    -lopenfast_postlib \
+    -lopenfast_prelib \
+    -lopenfoamtypeslib \
+    -lorcaflexlib \
+    -lscfastlib \
+    -lsctypeslib \
+    -lservodynlib \
+    -lsubdynlib 
+

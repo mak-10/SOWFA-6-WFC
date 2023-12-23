@@ -1,0 +1,11 @@
+/* cellSetOption/cellSetOption.C */
+/* cellSetOption/cellSetOptionIO.C */
+
+spongeLayer/spongeLayer.C
+CoriolisForce/CoriolisForce.C
+buoyancyModel/buoyancyModel.C
+drivingForce/drivingForces.C
+perturbationZone/perturbationZones.C
+windCanopy/windCanopy.C
+
+LIB = $(SOWFA_LIBBIN)/libSOWFAABLForcing

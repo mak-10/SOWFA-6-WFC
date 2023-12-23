@@ -1,0 +1,3 @@
+makeSOWFAincompressibleTurbulenceModels/makeSOWFAincompressibleTurbulenceModels.C
+
+LIB = $(SOWFA_LIBBIN)/libSOWFAincompressibleTurbulenceModels

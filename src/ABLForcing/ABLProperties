@@ -1,0 +1,211 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2.4.x                                 |
+|   \\  /    A nd           | Web:      http://www.openfoam.org               |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+
+FoamFile
+{
+    version         2.0;
+    format          ascii;
+
+    root            "";
+    case            "";
+    instance        "";
+    local           "";
+
+    class           dictionary;
+    object          ABLProperties;
+}
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+#include        "../setUp"
+
+
+// Properties of the mesoscale source terms
+// ----------------------------------------
+// There are two possible types of source terms:
+// - The "given" type means that the source values are directly given
+//   and the flow field will react accordingly.  
+// - The "computed" type means that the mean profiles
+//   are given and the source terms that maintain them are computed. 
+
+momentumSource
+{
+    // General input parameters
+    type                "computed";                 // Type of source to use
+    inputType           "component";                // Specific for momentum and only used when type is "computed":
+                                                    // - "component" means the x, y and z components are specified,
+                                                    // - "speedAndDirection" means wind speed, wind direction and vertical component are specified.
+    setVerticalCompZero true;                       // Specific for momentum and only used when type is "computed": subtract off any vertical part (Default to True)
+    gain                0.0168;                     // Controller gain (only used when type is "computed")
+    
+    // Source Table
+    #include "../forcing/fieldTable"
+
+    // The following properties are only used
+    // when type is "computed" and when multiple
+    // source heights are specified
+    writeError      false;                          // Write out error between horizontal averaged profile and given input profile.
+    alpha           0.2;                            // Weights of proportional and integral action are alpha and (1-alpha), respectively
+    timeWindow      3600.0;                         // Time window of exponential time filter in integral action (s).
+    regSmoothing    true;                           // Smooth error profile by fitting a regression curve
+    regOrder        3;                              // Order of regression polynomial (only used when regSmoothing is true)
+    weightsTable                                    // Table with weights (only used when regSmoothing is true)
+    (
+        //  z   weight
+        (0.0        0.0)
+        (1000.0     1.0)
+        (4000.0     1.0)
+    );
+}
+
+temperatureSource
+{
+    // General input parameters
+    type        "computed";                         // Type of source to use
+    gain        0.0168;                             // Controller gain (only used when type is "computed")
+
+    // Source Table
+    #include "../forcing/fieldTable"
+
+    // The following properties are only used
+    // when type is "computed" and when multiple
+    // source heights are specified
+    writeError      false;                          // Write out error between horizontal averaged profile and given input profile.
+    alpha           0.2;                            // Weights of proportional and integral action are alpha and (1-alpha), respectively
+    timeWindow      3600.0;                         // Time window of exponential time filter in integral action (s).
+    regSmoothing    true;                           // Smooth error profile by fitting a regression curve
+    regOrder        3;                              // Order of regression polynomial (only used when regSmoothing is true)
+    weightsTable                                    // Table with weights (only used when regSmoothing is true)
+    (
+        //  z   weight
+        (0.0        0.0)
+        (1000.0     1.0)
+        (4000.0     1.0)
+    );
+}
+
+
+// Properties of the Coriolis force
+planetaryRotationPeriod   $EarthPeriod;             // Latitude on the Earth of the site (deg).
+latitude                  $latitude;                // Earth's rotation period (hr).
+
+
+// Pressure handling.
+activatePressureRefCell   true;                     // Switch to set the pressure reference cell explicitly in the p_rgh solve.
+perturbationPressureType  "rhokSplit";              // Options for defining the background pressure:
+                                                    // - noSplit:   do not split out hydrostatic part; pressure is then perturbation pressure.
+                                                    // - rho0Split: split out the hydrostatic part; define hydrostatic as rho_0 * g * z.
+                                                    // - rhokSplit: split out the hydrostatic part; define hydrostatic as rho_k * g * z.
+
+
+// Sponge layer parameters.
+spongeList
+{
+    upperSponge
+    {
+        type             "Rayleigh";                // Type of sponge layer: "none" (Default), "Rayleigh" or "viscous".
+        patch            "upper";                   // Apply patch on a specific patch.
+        width            5000.0;                    // Width of the sponge layer (m). Set this variable is constant, or
+        //widthTable                                  // set this variable is time-varying.
+        //(
+        // ( 0    5000)
+        // ( 1000 6000)
+        // ( 1500 5500)
+        //);
+        dampCoeffMax     0.1;                       // Maximum damping coefficient, dimensions depend on type of damping:
+                                                    // Rayleigh (1/s),  viscous  (m^2/s)
+        //dampCoeffMaxTable                         // Time-varying maximum damping coefficient
+        //(
+        //  ( 0    0.05)
+        //  ( 1000 0.1)
+        //  ( 1500 0.07)
+        //);
+        cosFraction       1;                        // Fraction of the layer's width that has a smooth transition of viscosity
+                                                    //cosFractionTable is also available 
+
+        dampingComp      "horizontal";              // Components to be damped: "horizontal" for x and y, or "vertical" for z
+                                                    //    if "horizontal" and "Rayleigh", Ux and Uy need to be specified  
+        Ux               10.0;                      // Sponge layer reference velocity in x direction (m/s).
+        Uy               0.0;                       // Sponge layer reference velocity in y direction (m/s).
+
+        // The settings below can be used instead of `patch`, if a more general layer is needed
+        //startLocation    10000.0;                   // Start location of the sponge layer (m)
+        //coordIndex       2;                         // Coordinate index: 0, 1 or 2 corresponding to yz, xz or xy slab.
+        //direction        "stepUp";                  // Shape of damping function: "stepUp" increases smoothly from 0 to 1 in the
+                                                      // specified coordinate direction, "stepDown" decreases in the coordinate direction.
+    }
+    eastSponge
+    {
+        type             "Rayleigh";
+        patch            "east";
+        width            5000.0;    
+        dampCoeffMax     0.1;      
+        cosFractionTable
+        (
+            ( 0    1.0)
+            ( 1000 0.7)
+            ( 2000 1.0)
+        );
+
+        dampingComp       "vertical";
+
+        vertFilter              true;               // Vertical filter on side layers. Cannot be used on `upper`-type layers
+        vertFilterStartHeight   500;                // Height where the filter should start. No damping under this height. *Table version available
+        vertFilterCosThickness  200;                // Thickness of the smooth vertical transition. *Table version available.
+        useWallDist             true;               // Whether the height used for the vertical filter is absolute or above-ground-level height
+                                                    // The wall dist value can be specified on a per-layer basis
+    }
+}
+
+
+// Input block for adding perturbations to field.  This example it to add perturbations to the potential temperature field
+// along the south and west boundaries.  It is set up for a flow that is 10 m/s from south-west.  The update period is based
+// on how long it takes that flow to traverse the 240 m thick perturbation zone.
+flowPerturbationZones.T
+{
+    west
+    {
+        locationType           "lateralBoundary";
+        associatedBoundary     "west";
+        thickness               240.0;
+        height                  760.0;
+        useWallDistance         false;
+        resolution             (80.0 80.0 20.0);
+      //dimensions             (64 64 38);
+        fluctuationScale        2.0;
+        updateMode             "fixedFrequency";
+        updatePeriod            33.94;
+      //applicationMode        "sourceTerm";
+        applicationMode        "direct";
+    }
+    south
+    {
+        locationType           "lateralBoundary";
+        associatedBoundary     "south";
+        thickness               240.0;
+        height                  760.0;
+        useWallDistance         false;
+        resolution             (80.0 80.0 20.0);
+      //dimensions             (64 64 38);
+        fluctuationScale        2.0;
+        updateMode             "fixedFrequency";
+        updatePeriod            33.94;
+      //applicationMode        "sourceTerm";
+        applicationMode        "direct";
+    }
+}
+
+
+
+// Write out postProcessing/sourceHistory
+writeSource             $writeSource;
+writeSourceInterval     $writeSourceInterval;
+
+
+
+// ************************************************************************* //

@@ -1,0 +1,103 @@
+#!/bin/bash
+#SBATCH --job-name=runTutFarm
+#SBATCH --output foam2run_%j.log
+#SBATCH --ntasks=288         # Change on setUp as well
+#SBATCH --time=1-00
+#SBATCH --account=mmc
+#SBATCH --mail-user=username@nrel.gov
+#SBATCH --mail-type=end
+
+source $HOME/.bash_profile
+cores=$SLURM_NTASKS
+
+echo "Working directory is" $SLURM_SUBMIT_DIR
+echo "Job name is" $SLURM_JOB_NAME
+echo "Submit time is" $(squeue -u $USER -o '%30j %20V' | grep -e $SLURM_JOB_NAME | awk '{print $2}')
+echo "Starting OpenFOAM job at: " $(date)
+echo "using" $cores "core(s)"
+
+# ******************************************** USER INPUT ******************************************** #
+OpenFOAM-6-gcc-dev              # OpenFOAM/SOWFA version. OpenFOAM-6-{gcc,intel}-{central,dev}
+startTime=20000                 # Map time (DO NOT change for restarted runs)
+writeIntervalBeforeAvg=3000
+endTimeBeforeAvg=3000
+startTimeAvg=$endTimeBeforeAvg
+writeIntervalAvg=1000
+endTimeAvg=300000
+solver=superDeliciousVanilla
+coupled=WRFint                # precursor,WRFint,WRFbd. WRF-coupled uses the PAT method
+interp=linearupwind             # midpoint, linearupwind. divSchemes midpoint needed for gravity waves
+# **************************************************************************************************** #
+
+# **************************************** PERFORM SOME CHECKS *************************************** #
+if [ ! -f foam1preprocess.log ];                  then echo "Job killed (1)"; scancel $SLURM_JOBID; fi
+if [ ! -f system/controlDict.$solver ];           then echo "Job killed (2)"; scancel $SLURM_JOBID; fi
+if [ ! -f setUp ];                                then echo "Job killed (3)"; scancel $SLURM_JOBID; fi
+
+if [ $(echo "($endTimeBeforeAvg-$startTime)%$writeIntervalBeforeAvg" | bc) -ne 0 ];   then touch "WARNING_1"; fi
+if [ $(echo "($endTimeAvg-$startTimeAvg)%$writeIntervalAvg" | bc) -ne 0 ];            then touch "WARNING_2"; fi
+
+if [ $coupled = precursor ]; then
+    lastBdData=$(ls -v $(ls -d constant/boundaryData/* | head -1) | tail -2 | head -1)
+    if [ $(echo "${lastBdData%/} >= $endTimeAvg"|bc) -ne 1 ];                         then touch "WARNING_3"; fi
+fi
+# **************************************************************************************************** #
+
+# ***************************** COPY APPROPRIATE FILES AND SET VARIABLES ***************************** #
+cp system/controlDict.$solver                          system/controlDict
+cp system/fvSchemes.flow.$interp                       system/fvSchemes
+latestTime=$(foamListTimes -processor -latestTime -withZero -noFunctionObjects| tail -1)
+# **************************************************************************************************** #
+
+# Split run to get to developed-flow stage
+if [ $latestTime -lt $endTimeBeforeAvg ]; then
+    foamDictionary -entry "temporalAverages.enabled" -set "false" system/sampling/temporalAverages
+    foamDictionary -entry "boundaryData.enabled" -set "false" system/sampling/boundaryData
+    foamDictionary -entry "startTime" -set $latestTime -disableFunctionEntries system/controlDict
+    foamDictionary -entry "endTime" -set $endTimeBeforeAvg -disableFunctionEntries system/controlDict
+    foamDictionary -entry "writeInterval" -set $writeIntervalBeforeAvg -disableFunctionEntries system/controlDict
+    srun -n $cores --cpu_bind=cores $solver -parallel > log.2.$solver.startAt$latestTime 2>&1
+fi
+
+if [ $coupled = WRFint ]; then
+    # If WRFint, then this case is acting like a WRF-driven precursor
+
+    foamDictionary -entry "boundaryData.enabled"  -set "true" system/sampling/boundaryData
+    # Make the "precursor" data ready for future mapping
+    if [ -d processor0/$startTimeAvg ] && [ ! -f log.3.reconstructPar ]; then
+        foamDictionary -entry "writeFormat" -set ascii -disableFunctionEntries system/controlDict
+        reconstructPar -time $startTimeAvg -fields '(U T k p_rgh kappat nut qwall Rwall)'> log.3.reconstructPar 2>&1
+        # The z0 gets recomposed as 0, sometimes with '-nan` values. This is a known bug. Workaround below
+        z0=$(foamDictionary -entry "z0" -value setUp)
+        sed -i 's/-nan/0/g' $startTimeAvg/Rwall
+        foamDictionary -entry "boundaryField.lower.z0" -set $z0 $startTimeAvg/Rwall
+        foamDictionary -entry "writeFormat" -set binary -disableFunctionEntries system/controlDict
+    else
+        touch "WARNING_4"
+    fi
+fi
+
+# Split run to save averages
+continueTime=$(( $latestTime > $endTimeBeforeAvg ? $latestTime : $startTimeAvg ))
+foamDictionary -entry "temporalAverages.timeStart" -set $startTimeAvg system/sampling/temporalAverages
+foamDictionary -entry "temporalAverages.enabled"   -set "true" system/sampling/temporalAverages
+foamDictionary -entry "startTime" -set $continueTime -disableFunctionEntries system/controlDict
+foamDictionary -entry "endTime" -set $endTimeAvg -disableFunctionEntries system/controlDict 
+foamDictionary -entry "writeInterval" -set $writeIntervalAvg -disableFunctionEntries system/controlDict
+srun -n $cores --cpu_bind=cores $solver -parallel > log.2.$solver.startAt$continueTime 2>&1
+
+
+if [ $coupled = WRFint ]; then
+    # Adjust the initial time of boundaryData if it hasn't been adjusted yet
+    if [ ! -d postProcessing/boundaryData/north/$startTimeAvg ]; then
+        for dir in north south east west; do
+            ln -sf $(ls -v postProcessing/boundaryData/$dir | head -1) postProcessing/boundaryData/$dir/$startTimeAvg
+        done
+    fi
+fi
+
+echo "Ending OpenFOAM job at: " $(date)
+
+mv foam2run_${SLURM_JOBID}.log foam2run_startAt$continueTime
+
+# **************************************************************************************************** #
